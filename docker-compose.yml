@@ -1,0 +1,81 @@
+version: "3.8"
+
+services:
+  db:
+    image: ${POSTGRES_IMAGE}
+    container_name: mm-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - mm-db:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  mattermost:
+    platform: linux/amd64
+    image: ${MATTERMOST_IMAGE}
+    container_name: mm-app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # DB connection
+      MM_SQLSETTINGS_DRIVERNAME: postgres
+      MM_SQLSETTINGS_DATASOURCE: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable&connect_timeout=10
+
+      # Core service settings
+      MM_SERVICESETTINGS_LISTENADDRESS: :8065
+      MM_SERVICESETTINGS_SITEURL: ${MM_SITEURL}
+      MM_SERVICESETTINGS_ENABLELOCALMODE: "true"
+      MM_SERVICESETTINGS_LOCALMODESOCKETLOCATION: /var/tmp/mattermost_local.socket
+      MM_SERVICESETTINGS_ALLOWEDUNTRUSTEDINTERNALCONNECTIONS: "localhost 127.0.0.1 example mmbot"
+
+      # Email: make sign-in easy for local testing
+      MM_EMAILSETTINGS_ENABLESIGNUPWITHEMAIL: "true"
+      MM_EMAILSETTINGS_REQUIREEMAILVERIFICATION: "false"
+      MM_EMAILSETTINGS_SENDEMAILNOTIFICATIONS: "false"
+
+      # Logging
+      MM_LOGSETTINGS_CONSOLELEVEL: DEBUG
+      TZ: ${TZ}
+
+    ports:
+      - "${MATTERMOST_HTTP_PORT}:8065"
+    volumes:
+      - mm-data:/mattermost/data
+      - mm-logs:/mattermost/logs
+      - mm-config:/mattermost/config
+      - mm-plugins:/mattermost/plugins
+      - mm-client-plugins:/mattermost/client/plugins
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8065/api/v4/system/ping | grep -q 'OK'"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+
+  mmbot:
+    build: ./mmbot
+    container_name: mmbot
+    env_file:
+      - .env
+      - mmbot/.env
+    depends_on:
+      mattermost:
+        condition: service_started
+    ports:
+      - "3001:3000"
+
+volumes:
+  mm-db:
+  mm-data:
+  mm-logs:
+  mm-config:
+  mm-plugins:
+  mm-client-plugins:
